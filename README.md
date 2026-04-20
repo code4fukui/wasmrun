@@ -4,7 +4,7 @@ A small WebAssembly runtime in C.
 
 [日本語版](README.ja.md)
 
-## limits
+## Limitations
 
 This is a small integer-only runtime intended for learning and experiments.
 

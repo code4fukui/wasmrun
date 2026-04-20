@@ -4,7 +4,7 @@
 
 [English](README.md)
 
-## limits
+## 制限
 
 現状は学習用の小さな整数限定ランタイムです。
 
