@@ -14,6 +14,9 @@
 #define WASMRUN_MAX_LOCALS 256
 #define WASMRUN_MAX_GLOBALS 64
 
+typedef struct Wasmrun Wasmrun;
+typedef int (*WasmrunHostFunc)(Wasmrun *m, void *user, const int32_t *args, int32_t *result);
+
 typedef struct {
   uint32_t nparams;
   int32_t result_type;
@@ -25,6 +28,11 @@ typedef struct {
   const uint8_t *end;
   uint32_t nlocals;
   uint8_t locals[WASMRUN_MAX_LOCALS];
+  uint8_t imported;
+  char *import_module;
+  char *import_name;
+  WasmrunHostFunc host;
+  void *host_user;
 } WasmrunFunc;
 
 typedef struct {
@@ -37,17 +45,18 @@ typedef struct {
   int32_t value;
 } WasmrunGlobal;
 
-typedef struct {
+struct Wasmrun {
   WasmrunSig types[WASMRUN_MAX_TYPES];
   uint32_t ntypes;
   WasmrunFunc funcs[WASMRUN_MAX_FUNCS];
   uint32_t nfuncs;
+  uint32_t nimports;
   WasmrunGlobal globals[WASMRUN_MAX_GLOBALS];
   uint32_t nglobals;
   WasmrunExport exports[WASMRUN_MAX_EXPORTS];
   uint32_t nexports;
   const char *error;
-} Wasmrun;
+};
 
 typedef struct { const uint8_t *p, *end; } WasmrunR;
 typedef struct { uint8_t op; const uint8_t *start, *end; int height; } WasmrunCtrl;
@@ -55,6 +64,7 @@ typedef struct { uint8_t op; const uint8_t *start, *end; int height; } WasmrunCt
 static inline void wasmrun_init(Wasmrun *m);
 static inline void wasmrun_free(Wasmrun *m);
 static inline int wasmrun_load(Wasmrun *m, const uint8_t *data, size_t len);
+static inline int wasmrun_set_import_func(Wasmrun *m, const char *module, const char *name, WasmrunHostFunc host, void *user);
 static inline int wasmrun_find_export(Wasmrun *m, const char *name, uint32_t *func);
 static inline int wasmrun_call(Wasmrun *m, uint32_t func, const int32_t *args, int32_t *result, int *has_result);
 static inline int wasmrun_call_export(Wasmrun *m, const char *name, const int32_t *args, int32_t *result, int *has_result);
@@ -85,6 +95,14 @@ static int wasmrun_sleb_(Wasmrun *m, WasmrunR *r, int32_t *v) {
 static int wasmrun_bytes_(Wasmrun *m, WasmrunR *r, const uint8_t **p, uint32_t n) {
   if ((uint32_t)(r->end - r->p) < n) return wasmrun_fail_(m, "short section");
   *p = r->p; r->p += n; return 1;
+}
+static int wasmrun_name_(Wasmrun *m, WasmrunR *r, char **name) {
+  uint32_t n; const uint8_t *p;
+  if (!wasmrun_leb_(m, r, &n) || !wasmrun_bytes_(m, r, &p, n)) return 0;
+  *name = malloc(n + 1);
+  if (!*name) return wasmrun_fail_(m, "oom");
+  memcpy(*name, p, n); (*name)[n] = 0;
+  return 1;
 }
 static int wasmrun_read32_(Wasmrun *m, WasmrunR *r, uint32_t *v) {
   uint8_t a, b, c, d;
@@ -129,6 +147,10 @@ static int wasmrun_find_else_end_(Wasmrun *m, const uint8_t *p, const uint8_t *e
 static inline void wasmrun_init(Wasmrun *m) { memset(m, 0, sizeof(*m)); }
 
 static inline void wasmrun_free(Wasmrun *m) {
+  for (uint32_t i = 0; i < m->nfuncs; i++) {
+    free(m->funcs[i].import_module);
+    free(m->funcs[i].import_name);
+  }
   for (uint32_t i = 0; i < m->nexports; i++) free(m->exports[i].name);
   wasmrun_init(m);
 }
@@ -153,18 +175,36 @@ static inline int wasmrun_load(Wasmrun *m, const uint8_t *data, size_t len) {
         uint32_t nr; if (!wasmrun_leb_(m, &s, &nr)) return 0; if (nr > 1) return wasmrun_fail_(m, "too many results");
         if (nr) { uint8_t vt; if (!wasmrun_u8_(m, &s, &vt)) return 0; if (vt != 0x7f) return wasmrun_fail_(m, "only i32 result"); t->result_type = 0x7f; }
       }
+    } else if (id == 2) {
+      uint32_t ni;
+      if (!wasmrun_leb_(m, &s, &ni)) return 0;
+      for (uint32_t i = 0; i < ni; i++) {
+        char *module = NULL, *name = NULL;
+        uint8_t kind;
+        if (!wasmrun_name_(m, &s, &module) || !wasmrun_name_(m, &s, &name) || !wasmrun_u8_(m, &s, &kind)) {
+          free(module); free(name); return 0;
+        }
+        if (kind != 0) { free(module); free(name); return wasmrun_fail_(m, "only function imports"); }
+        if (m->nfuncs >= WASMRUN_MAX_FUNCS) { free(module); free(name); return wasmrun_fail_(m, "too many funcs"); }
+        WasmrunFunc *f = &m->funcs[m->nfuncs++];
+        if (!wasmrun_leb_(m, &s, &f->type)) { free(module); free(name); return 0; }
+        if (f->type >= m->ntypes) { free(module); free(name); return wasmrun_fail_(m, "bad import type"); }
+        f->imported = 1;
+        f->import_module = module;
+        f->import_name = name;
+        m->nimports++;
+      }
     } else if (id == 3) {
-      if (!wasmrun_leb_(m, &s, &m->nfuncs)) return 0;
-      if (m->nfuncs > WASMRUN_MAX_FUNCS) return wasmrun_fail_(m, "too many funcs");
-      for (uint32_t i = 0; i < m->nfuncs; i++) if (!wasmrun_leb_(m, &s, &m->funcs[i].type)) return 0;
+      uint32_t nf;
+      if (!wasmrun_leb_(m, &s, &nf)) return 0;
+      if (m->nfuncs + nf > WASMRUN_MAX_FUNCS) return wasmrun_fail_(m, "too many funcs");
+      for (uint32_t i = 0; i < nf; i++) if (!wasmrun_leb_(m, &s, &m->funcs[m->nimports + i].type)) return 0;
+      m->nfuncs += nf;
     } else if (id == 7) {
       if (!wasmrun_leb_(m, &s, &m->nexports)) return 0;
       if (m->nexports > WASMRUN_MAX_EXPORTS) return wasmrun_fail_(m, "too many exports");
       for (uint32_t i = 0; i < m->nexports; i++) {
-        uint32_t n; const uint8_t *p;
-        if (!wasmrun_leb_(m, &s, &n) || !wasmrun_bytes_(m, &s, &p, n)) return 0;
-        m->exports[i].name = malloc(n + 1); if (!m->exports[i].name) return wasmrun_fail_(m, "oom");
-        memcpy(m->exports[i].name, p, n); m->exports[i].name[n] = 0;
+        if (!wasmrun_name_(m, &s, &m->exports[i].name)) return 0;
         uint8_t kind; if (!wasmrun_u8_(m, &s, &kind)) return 0; if (kind != 0) return wasmrun_fail_(m, "only function exports");
         if (!wasmrun_leb_(m, &s, &m->exports[i].func)) return 0;
       }
@@ -183,7 +223,9 @@ static inline int wasmrun_load(Wasmrun *m, const uint8_t *data, size_t len) {
         m->globals[i].mut = mut;
       }
     } else if (id == 10) {
-      uint32_t nf; if (!wasmrun_leb_(m, &s, &nf)) return 0; if (nf != m->nfuncs) return wasmrun_fail_(m, "function/code count mismatch");
+      uint32_t nf, first = m->nimports;
+      if (!wasmrun_leb_(m, &s, &nf)) return 0;
+      if (nf != m->nfuncs - m->nimports) return wasmrun_fail_(m, "function/code count mismatch");
       for (uint32_t i = 0; i < nf; i++) {
         uint32_t n; if (!wasmrun_leb_(m, &s, &n)) return 0; WasmrunR b = { s.p, s.p + n }; if (b.end > s.end) return wasmrun_fail_(m, "bad body");
         uint32_t groups, nl = 0; if (!wasmrun_leb_(m, &b, &groups)) return 0;
@@ -191,16 +233,27 @@ static inline int wasmrun_load(Wasmrun *m, const uint8_t *data, size_t len) {
           uint32_t c; uint8_t vt; if (!wasmrun_leb_(m, &b, &c) || !wasmrun_u8_(m, &b, &vt)) return 0;
           if (vt != 0x7f) return wasmrun_fail_(m, "only i32 locals");
           if (nl + c > WASMRUN_MAX_LOCALS) return wasmrun_fail_(m, "too many locals");
-          while (c--) m->funcs[i].locals[nl++] = vt;
+          while (c--) m->funcs[first + i].locals[nl++] = vt;
         }
-        m->funcs[i].nlocals = nl; m->funcs[i].code = b.p; m->funcs[i].end = b.end; s.p += n;
+        m->funcs[first + i].nlocals = nl; m->funcs[first + i].code = b.p; m->funcs[first + i].end = b.end; s.p += n;
       }
-    } else if (id == 2) {
-      return wasmrun_fail_(m, "imports are not supported");
     }
     r.p += size;
   }
   return 1;
+}
+
+static inline int wasmrun_set_import_func(Wasmrun *m, const char *module, const char *name, WasmrunHostFunc host, void *user) {
+  m->error = NULL;
+  for (uint32_t i = 0; i < m->nimports; i++) {
+    WasmrunFunc *f = &m->funcs[i];
+    if (!strcmp(f->import_module, module) && !strcmp(f->import_name, name)) {
+      f->host = host;
+      f->host_user = user;
+      return 1;
+    }
+  }
+  return wasmrun_fail_(m, "import not found");
 }
 
 static inline int wasmrun_find_export(Wasmrun *m, const char *name, uint32_t *func) {
@@ -218,6 +271,14 @@ static inline uint32_t wasmrun_param_count(Wasmrun *m, uint32_t func) {
 static int wasmrun_call_func_(Wasmrun *m, uint32_t fi, const int32_t *args, int32_t *result, int *has_result) {
   if (fi >= m->nfuncs) return wasmrun_fail_(m, "bad function index");
   WasmrunFunc *f = &m->funcs[fi]; WasmrunSig *sig = &m->types[f->type];
+  if (f->imported) {
+    if (!f->host) return wasmrun_fail_(m, "unbound import");
+    int32_t rv = 0;
+    if (!f->host(m, f->host_user, args, &rv)) return 0;
+    *has_result = sig->result_type == 0x7f;
+    if (*has_result) *result = rv;
+    return 1;
+  }
   int32_t locals[512] = {0}, st[1024]; int sp = 0, cp = 0; WasmrunCtrl cs[128];
   for (uint32_t i = 0; i < sig->nparams; i++) locals[i] = args[i];
   WasmrunR pc = { f->code, f->end };

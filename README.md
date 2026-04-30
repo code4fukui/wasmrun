@@ -9,11 +9,12 @@ A small WebAssembly runtime in C.
 This is a small integer-only runtime intended for learning and experiments.
 
 - WebAssembly binary format v1 only
-- Supported sections: type / function / global / export / code
+- Supported sections: type / import / function / global / export / code
 - Only the `i32` value type is supported
 - Function results are limited to no result or one `i32` result
 - Supported instructions: `i32.const`, local get/set/tee, global get/set, i32 arithmetic, comparisons, bit operations, shifts, `call`, `return`, `drop`, `select`, `block`, `loop`, resultless `if`/`else`, `br`, `br_if`
-- Unsupported: import / memory instructions / global exports / table / float / SIMD / multi-value / host functions
+- Function imports can be bound to host callbacks
+- Unsupported: memory instructions / global exports / table / float / SIMD / multi-value
 - This is not a strict validator; safely running malformed wasm is out of scope
 
 ## build
@@ -55,6 +56,15 @@ deno install -f --allow-import --allow-read --allow-write --global --name yasac 
 yasac examples/addc.c
 ./wasmrun examples/addc.wasm add 40 2
 # 42
+```
+
+Function imports can be provided by embedding code. `examples/putchar.c` imports `env.putchar`, and `examples/wasmrun_with_putchar.c` binds it to C `putchar`.
+
+```sh
+yasac examples/putchar.c
+cc -std=c99 -Wall -Wextra -O2 examples/wasmrun_with_putchar.c -o wasmrun_with_putchar
+./wasmrun_with_putchar examples/putchar.wasm
+# ABC
 ```
 
 After editing a `.wat` file, regenerate the matching `.wasm` with `wat2wasm`.
@@ -111,6 +121,20 @@ int has_result;
 wasmrun_call_export(&m, "add", args, &result, &has_result);
 
 wasmrun_free(&m);
+```
+
+Bind a function import before calling an export:
+
+```c
+static int host_putchar(Wasmrun *m, void *user, const int32_t *args, int32_t *result) {
+  (void)m;
+  (void)user;
+  (void)result;
+  putchar(args[0]);
+  return 1;
+}
+
+wasmrun_set_import_func(&m, "env", "putchar", host_putchar, NULL);
 ```
 
 Compile:
