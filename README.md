@@ -9,11 +9,11 @@ A small WebAssembly runtime in C.
 This is a small integer-only runtime intended for learning and experiments.
 
 - WebAssembly binary format v1 only
-- Supported sections: type / function / export / code
+- Supported sections: type / function / global / export / code
 - Only the `i32` value type is supported
 - Function results are limited to no result or one `i32` result
-- Supported instructions: `i32.const`, local get/set/tee, i32 arithmetic, comparisons, bit operations, shifts, `call`, `return`, `drop`, `select`, `block`, `loop`, resultless `if`/`else`, `br`, `br_if`
-- Unsupported: import / memory / global / table / float / SIMD / multi-value / host functions
+- Supported instructions: `i32.const`, local get/set/tee, global get/set, i32 arithmetic, comparisons, bit operations, shifts, `call`, `return`, `drop`, `select`, `block`, `loop`, resultless `if`/`else`, `br`, `br_if`
+- Unsupported: import / memory instructions / global exports / table / float / SIMD / multi-value / host functions
 - This is not a strict validator; safely running malformed wasm is out of scope
 
 ## build
@@ -46,6 +46,15 @@ Prebuilt `.wasm` files are included in `examples`, so you can run them directly.
 
 ./wasmrun examples/max.wasm max -2 7
 # 7
+```
+
+`examples/addc.c` can be compiled with the Yasa-C CLI `yasac`.
+
+```sh
+deno install -f --allow-import --allow-read --allow-write --global --name yasac https://raw.githubusercontent.com/code4fukui/yasa-c/main/yasac.js
+yasac examples/addc.c
+./wasmrun examples/addc.wasm add 40 2
+# 42
 ```
 
 After editing a `.wat` file, regenerate the matching `.wasm` with `wat2wasm`.

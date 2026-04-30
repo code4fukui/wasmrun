@@ -12,6 +12,7 @@
 #define WASMRUN_MAX_EXPORTS 128
 #define WASMRUN_MAX_PARAMS 16
 #define WASMRUN_MAX_LOCALS 256
+#define WASMRUN_MAX_GLOBALS 64
 
 typedef struct {
   uint32_t nparams;
@@ -32,10 +33,17 @@ typedef struct {
 } WasmrunExport;
 
 typedef struct {
+  uint8_t mut;
+  int32_t value;
+} WasmrunGlobal;
+
+typedef struct {
   WasmrunSig types[WASMRUN_MAX_TYPES];
   uint32_t ntypes;
   WasmrunFunc funcs[WASMRUN_MAX_FUNCS];
   uint32_t nfuncs;
+  WasmrunGlobal globals[WASMRUN_MAX_GLOBALS];
+  uint32_t nglobals;
   WasmrunExport exports[WASMRUN_MAX_EXPORTS];
   uint32_t nexports;
   const char *error;
@@ -84,14 +92,24 @@ static int wasmrun_read32_(Wasmrun *m, WasmrunR *r, uint32_t *v) {
   *v = a | (uint32_t)b << 8 | (uint32_t)c << 16 | (uint32_t)d << 24; return 1;
 }
 
+static int wasmrun_skip_immediate_(Wasmrun *m, WasmrunR *r, uint8_t op) {
+  if (op == 0x0c || op == 0x0d || op == 0x10 || op == 0x20 || op == 0x21 ||
+      op == 0x22 || op == 0x23 || op == 0x24) {
+    uint32_t x; return wasmrun_leb_(m, r, &x);
+  }
+  if (op == 0x41) {
+    int32_t x; return wasmrun_sleb_(m, r, &x);
+  }
+  return 1;
+}
+
 static int wasmrun_find_end_(Wasmrun *m, const uint8_t *p, const uint8_t *end, const uint8_t **endp) {
   int depth = 1; WasmrunR r = { p, end };
   while (r.p < r.end) {
     uint8_t op; if (!wasmrun_u8_(m, &r, &op)) return 0;
     if (op == 0x02 || op == 0x03 || op == 0x04) { int32_t x; if (!wasmrun_sleb_(m, &r, &x)) return 0; depth++; }
     else if (op == 0x0b && --depth == 0) { *endp = r.p - 1; return 1; }
-    else if (op == 0x0c || op == 0x0d || op == 0x10 || op == 0x20 || op == 0x21 || op == 0x22) { uint32_t x; if (!wasmrun_leb_(m, &r, &x)) return 0; }
-    else if (op == 0x41) { int32_t x; if (!wasmrun_sleb_(m, &r, &x)) return 0; }
+    else if (!wasmrun_skip_immediate_(m, &r, op)) return 0;
   }
   return wasmrun_fail_(m, "missing end");
 }
@@ -103,8 +121,7 @@ static int wasmrun_find_else_end_(Wasmrun *m, const uint8_t *p, const uint8_t *e
     if (op == 0x02 || op == 0x03 || op == 0x04) { int32_t x; if (!wasmrun_sleb_(m, &r, &x)) return 0; depth++; }
     else if (op == 0x05 && depth == 1) *elsep = r.p - 1;
     else if (op == 0x0b && --depth == 0) { *endp = r.p - 1; return 1; }
-    else if (op == 0x0c || op == 0x0d || op == 0x10 || op == 0x20 || op == 0x21 || op == 0x22) { uint32_t x; if (!wasmrun_leb_(m, &r, &x)) return 0; }
-    else if (op == 0x41) { int32_t x; if (!wasmrun_sleb_(m, &r, &x)) return 0; }
+    else if (!wasmrun_skip_immediate_(m, &r, op)) return 0;
   }
   return wasmrun_fail_(m, "missing if end");
 }
@@ -150,6 +167,20 @@ static inline int wasmrun_load(Wasmrun *m, const uint8_t *data, size_t len) {
         memcpy(m->exports[i].name, p, n); m->exports[i].name[n] = 0;
         uint8_t kind; if (!wasmrun_u8_(m, &s, &kind)) return 0; if (kind != 0) return wasmrun_fail_(m, "only function exports");
         if (!wasmrun_leb_(m, &s, &m->exports[i].func)) return 0;
+      }
+    } else if (id == 6) {
+      if (!wasmrun_leb_(m, &s, &m->nglobals)) return 0;
+      if (m->nglobals > WASMRUN_MAX_GLOBALS) return wasmrun_fail_(m, "too many globals");
+      for (uint32_t i = 0; i < m->nglobals; i++) {
+        uint8_t vt, mut, op, endop;
+        if (!wasmrun_u8_(m, &s, &vt) || !wasmrun_u8_(m, &s, &mut)) return 0;
+        if (vt != 0x7f) return wasmrun_fail_(m, "only i32 globals");
+        if (mut > 1) return wasmrun_fail_(m, "bad global mutability");
+        if (!wasmrun_u8_(m, &s, &op)) return 0;
+        if (op != 0x41) return wasmrun_fail_(m, "only i32.const global init");
+        if (!wasmrun_sleb_(m, &s, &m->globals[i].value) || !wasmrun_u8_(m, &s, &endop)) return 0;
+        if (endop != 0x0b) return wasmrun_fail_(m, "bad global init");
+        m->globals[i].mut = mut;
       }
     } else if (id == 10) {
       uint32_t nf; if (!wasmrun_leb_(m, &s, &nf)) return 0; if (nf != m->nfuncs) return wasmrun_fail_(m, "function/code count mismatch");
@@ -226,6 +257,17 @@ static int wasmrun_call_func_(Wasmrun *m, uint32_t fi, const int32_t *args, int3
     case 0x20: { uint32_t i; if (!wasmrun_leb_(m, &pc, &i)) return 0; st[sp++] = locals[i]; break; }
     case 0x21: { uint32_t i; if (!wasmrun_leb_(m, &pc, &i)) return 0; locals[i] = st[--sp]; break; }
     case 0x22: { uint32_t i; if (!wasmrun_leb_(m, &pc, &i)) return 0; locals[i] = st[sp - 1]; break; }
+    case 0x23: {
+      uint32_t i; if (!wasmrun_leb_(m, &pc, &i)) return 0;
+      if (i >= m->nglobals) return wasmrun_fail_(m, "bad global index");
+      st[sp++] = m->globals[i].value; break;
+    }
+    case 0x24: {
+      uint32_t i; if (!wasmrun_leb_(m, &pc, &i)) return 0;
+      if (i >= m->nglobals) return wasmrun_fail_(m, "bad global index");
+      if (!m->globals[i].mut) return wasmrun_fail_(m, "immutable global set");
+      m->globals[i].value = st[--sp]; break;
+    }
     case 0x41: { int32_t v; if (!wasmrun_sleb_(m, &pc, &v)) return 0; st[sp++] = v; break; }
     case 0x45: st[sp - 1] = !st[sp - 1]; break;
     case 0x46: case 0x47: case 0x48: case 0x49: case 0x4a: case 0x4b:
