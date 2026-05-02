@@ -1,6 +1,6 @@
 # wasmrun
 
-A small WebAssembly runtime in C.
+A small WebAssembly runtime implemented in C and JavaScript.
 
 [日本語版](README.ja.md)
 
@@ -27,6 +27,12 @@ make
 
 ```sh
 ./wasmrun file.wasm [export] [i32 args...]
+```
+
+The JavaScript implementation can be run with Deno:
+
+```sh
+deno run --allow-read main.js file.wasm [export] [i32 args...]
 ```
 
 When `export` is omitted, `main` is called. If `main` is not found, `_start` is tried.
@@ -64,6 +70,13 @@ Function imports can be provided by embedding code. `examples/putchar.c` imports
 yasac examples/putchar.c
 cc -std=c99 -Wall -Wextra -O2 examples/wasmrun_with_putchar.c -o wasmrun_with_putchar
 ./wasmrun_with_putchar examples/putchar.wasm
+# ABC
+```
+
+The same import can be bound from JavaScript with Deno:
+
+```sh
+deno run --allow-read examples/wasmrun_with_putchar.js examples/putchar.wasm
 # ABC
 ```
 
@@ -123,6 +136,19 @@ wasmrun_call_export(&m, "add", args, &result, &has_result);
 wasmrun_free(&m);
 ```
 
+Or import `Wasmrun.js` from JavaScript:
+
+```js
+import { Wasmrun } from "./Wasmrun.js";
+
+const wasm = await Deno.readFile("examples/add.wasm");
+const m = new Wasmrun();
+m.load(wasm);
+
+const result = m.callExport("add", [40, 2]);
+if (result?.hasResult) console.log(result.result);
+```
+
 Bind a function import before calling an export:
 
 ```c
@@ -135,6 +161,18 @@ static int host_putchar(Wasmrun *m, void *user, const int32_t *args, int32_t *re
 }
 
 wasmrun_set_import_func(&m, "env", "putchar", host_putchar, NULL);
+```
+
+The JavaScript API provides the same binding step with `setImportFunc`:
+
+```js
+const hostPutchar = (_m, _user, args) => {
+  Deno.stdout.writeSync(new Uint8Array([args[0] & 255]));
+  return 1;
+};
+
+m.setImportFunc("env", "putchar", hostPutchar, null);
+m.callExport("main");
 ```
 
 Compile:

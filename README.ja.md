@@ -1,6 +1,6 @@
 # wasmrun
 
-シンプルなwasmランタイム in C
+C と JavaScript で実装したシンプルなwasmランタイム
 
 [English](README.md)
 
@@ -27,6 +27,12 @@ make
 
 ```sh
 ./wasmrun file.wasm [export] [i32 args...]
+```
+
+JavaScript 実装は Deno で実行できます。
+
+```sh
+deno run --allow-read main.js file.wasm [export] [i32 args...]
 ```
 
 `export` 省略時は `main`、なければ `_start` を呼びます。
@@ -64,6 +70,13 @@ function import は埋め込み側のコードで提供できます。`examples/
 yasac examples/putchar.c
 cc -std=c99 -Wall -Wextra -O2 examples/wasmrun_with_putchar.c -o wasmrun_with_putchar
 ./wasmrun_with_putchar examples/putchar.wasm
+# ABC
+```
+
+同じ import は Deno の JavaScript からも bind できます。
+
+```sh
+deno run --allow-read examples/wasmrun_with_putchar.js examples/putchar.wasm
 # ABC
 ```
 
@@ -121,6 +134,19 @@ wasmrun_call_export(&m, "add", args, &result, &has_result);
 wasmrun_free(&m);
 ```
 
+JavaScript からは `Wasmrun.js` を import して使えます。
+
+```js
+import { Wasmrun } from "./Wasmrun.js";
+
+const wasm = await Deno.readFile("examples/add.wasm");
+const m = new Wasmrun();
+m.load(wasm);
+
+const result = m.callExport("add", [40, 2]);
+if (result?.hasResult) console.log(result.result);
+```
+
 function import は export を呼ぶ前に bind します。
 
 ```c
@@ -133,6 +159,18 @@ static int host_putchar(Wasmrun *m, void *user, const int32_t *args, int32_t *re
 }
 
 wasmrun_set_import_func(&m, "env", "putchar", host_putchar, NULL);
+```
+
+JavaScript API では `setImportFunc` で同じ bind ができます。
+
+```js
+const hostPutchar = (_m, _user, args) => {
+  Deno.stdout.writeSync(new Uint8Array([args[0] & 255]));
+  return 1;
+};
+
+m.setImportFunc("env", "putchar", hostPutchar, null);
+m.callExport("main");
 ```
 
 コンパイル例:
