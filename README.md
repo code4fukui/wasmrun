@@ -9,12 +9,12 @@ A small WebAssembly runtime implemented in C and JavaScript.
 This is a small integer-only runtime intended for learning and experiments.
 
 - WebAssembly binary format v1 only
-- Supported sections: type / import / function / global / export / code
+- Supported sections: type / import / function / memory / global / export / code / data
 - Only the `i32` value type is supported
 - Function results are limited to no result or one `i32` result
-- Supported instructions: `i32.const`, local get/set/tee, global get/set, i32 arithmetic, comparisons, bit operations, shifts, `call`, `return`, `drop`, `select`, `block`, `loop`, resultless `if`/`else`, `br`, `br_if`
+- Supported instructions: `i32.const`, local get/set/tee, global get/set, `i32.load`, `i32.store`, i32 arithmetic, comparisons, bit operations, shifts, `call`, `return`, `drop`, `select`, `block`, `loop`, resultless `if`/`else`, `br`, `br_if`
 - Function imports can be bound to host callbacks
-- Unsupported: memory instructions / global exports / table / float / SIMD / multi-value
+- Unsupported: memory growth / global exports / table / float / SIMD / multi-value
 - This is not a strict validator; safely running malformed wasm is out of scope
 
 ## build

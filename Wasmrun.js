@@ -4,6 +4,8 @@ const WASMRUN_MAX_EXPORTS = 128;
 const WASMRUN_MAX_PARAMS = 16;
 const WASMRUN_MAX_LOCALS = 256;
 const WASMRUN_MAX_GLOBALS = 64;
+const WASMRUN_PAGE_SIZE = 65536;
+const WASMRUN_MAX_MEMORY_PAGES = 16;
 
 class Reader {
   constructor(data, p = 0, end = data.length) {
@@ -24,6 +26,7 @@ export class Wasmrun {
     this.nimports = 0;
     this.globals = [];
     this.exports = [];
+    this.memory = null;
     this._error = "";
   }
 
@@ -173,6 +176,19 @@ export class Wasmrun {
           if (endop !== 0x0b) return this.#fail("bad global init");
           this.globals.push({ mut, value: value | 0 });
         }
+      } else if (id === 5) {
+        const nm = this.#leb(s);
+        if (nm == null) return false;
+        if (nm > 1) return this.#fail("only one memory");
+        if (nm === 1) {
+          const flags = this.#leb(s);
+          const min = this.#leb(s);
+          if (flags == null || min == null) return false;
+          if (flags > 1) return this.#fail("bad memory limits");
+          if (flags === 1 && this.#leb(s) == null) return false;
+          if (min > WASMRUN_MAX_MEMORY_PAGES) return this.#fail("memory too large");
+          this.memory = new Uint8Array(min * WASMRUN_PAGE_SIZE);
+        }
       } else if (id === 10) {
         const nf = this.#leb(s);
         const first = this.nimports;
@@ -203,6 +219,30 @@ export class Wasmrun {
           f.codeStart = b.p;
           f.codeEnd = b.end;
           s.p += n;
+        }
+      } else if (id === 11) {
+        const nd = this.#leb(s);
+        if (nd == null) return false;
+        for (let i = 0; i < nd; i++) {
+          const flags = this.#leb(s);
+          if (flags == null) return false;
+          if (flags !== 0) return this.#fail("only active memory data");
+          const op = this.#u8(s);
+          if (op == null) return false;
+          if (op !== 0x41) return this.#fail("only i32.const data offset");
+          const offset = this.#sleb(s);
+          const endop = this.#u8(s);
+          if (offset == null || endop == null) return false;
+          if (endop !== 0x0b) return this.#fail("bad data offset");
+          const n = this.#leb(s);
+          if (n == null) return false;
+          const p = this.#bytes(s, n);
+          if (p == null) return false;
+          if (!this.memory) return this.#fail("data without memory");
+          if (offset < 0 || offset + n > this.memory.length) {
+            return this.#fail("data out of bounds");
+          }
+          this.memory.set(bytes.subarray(p, p + n), offset);
         }
       }
       r.p += size;
@@ -400,6 +440,39 @@ export class Wasmrun {
           this.globals[i].value = st[--sp];
           break;
         }
+        case 0x28: {
+          const align = this.#leb(pc);
+          const offset = this.#leb(pc);
+          if (align == null || offset == null) return { ok: false };
+          const addr = ((st[--sp] >>> 0) + offset) >>> 0;
+          if (!this.memory) return { ok: this.#fail("no memory") };
+          if (addr > this.memory.length - 4) {
+            return { ok: this.#fail("memory out of bounds") };
+          }
+          st[sp++] = (
+            this.memory[addr] |
+            (this.memory[addr + 1] << 8) |
+            (this.memory[addr + 2] << 16) |
+            (this.memory[addr + 3] << 24)
+          ) | 0;
+          break;
+        }
+        case 0x36: {
+          const align = this.#leb(pc);
+          const offset = this.#leb(pc);
+          if (align == null || offset == null) return { ok: false };
+          const value = st[--sp];
+          const addr = ((st[--sp] >>> 0) + offset) >>> 0;
+          if (!this.memory) return { ok: this.#fail("no memory") };
+          if (addr > this.memory.length - 4) {
+            return { ok: this.#fail("memory out of bounds") };
+          }
+          this.memory[addr] = value & 255;
+          this.memory[addr + 1] = (value >>> 8) & 255;
+          this.memory[addr + 2] = (value >>> 16) & 255;
+          this.memory[addr + 3] = (value >>> 24) & 255;
+          break;
+        }
         case 0x41: {
           const v = this.#sleb(pc);
           if (v == null) return { ok: false };
@@ -595,6 +668,9 @@ export class Wasmrun {
       op === 0x22 || op === 0x23 || op === 0x24
     ) {
       return this.#leb(r) != null;
+    }
+    if (op === 0x28 || op === 0x36) {
+      return this.#leb(r) != null && this.#leb(r) != null;
     }
     if (op === 0x41) return this.#sleb(r) != null;
     return true;

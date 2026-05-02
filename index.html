@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wasmrun Step Debugger</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #17201d;
+      background: #f4f6f4;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      height: 100vh;
+      overflow: hidden;
+      background: #f4f6f4;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 18px;
+      border-bottom: 1px solid #d3dad5;
+      background: #ffffff;
+    }
+
+    a {
+      color: #1e685d;
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    button,
+    select,
+    input {
+      height: 34px;
+      border: 1px solid #aeb9b2;
+      border-radius: 6px;
+      padding: 0 10px;
+      color: #17201d;
+      background: #ffffff;
+      font: inherit;
+      font-size: 14px;
+    }
+
+    button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-width: 38px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    button.primary {
+      border-color: #1e685d;
+      color: #ffffff;
+      background: #1e685d;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    input[type="file"] {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+
+    main {
+      height: calc(100vh - 53px);
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+      gap: 14px;
+      padding: 14px;
+    }
+
+    section {
+      min-width: 0;
+    }
+
+    .panel {
+      min-height: 0;
+      border: 1px solid #d4dcd7;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .panel h2 {
+      margin: 0;
+      padding: 10px 12px;
+      border-bottom: 1px solid #dbe2de;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .panel-head {
+      display: grid;
+      grid-template-columns: auto minmax(160px, 260px);
+      gap: 10px;
+      align-items: center;
+      padding: 8px 10px 8px 12px;
+      border-bottom: 1px solid #dbe2de;
+    }
+
+    .panel-head h2 {
+      padding: 0;
+      border-bottom: 0;
+    }
+
+    .panel-head select {
+      width: 100%;
+    }
+
+    .panel-body {
+      padding: 12px;
+    }
+
+    .controls {
+      display: grid;
+      gap: 12px;
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+
+    .row > label {
+      display: grid;
+      gap: 4px;
+      min-width: 120px;
+      flex: 1;
+      color: #52615a;
+      font-size: 12px;
+    }
+
+    .row input,
+    .row select {
+      width: 100%;
+      color: #17201d;
+      font-size: 14px;
+    }
+
+    .dropzone {
+      min-height: 84px;
+      display: grid;
+      place-items: center;
+      border: 2px dashed #9cb0a7;
+      border-radius: 8px;
+      padding: 14px;
+      color: #3f5149;
+      background: #f8faf8;
+      text-align: center;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .dropzone.dragover {
+      border-color: #1e685d;
+      background: #eaf4f1;
+    }
+
+    .dropzone:focus-visible {
+      outline: 2px solid #1e685d;
+      outline-offset: 2px;
+    }
+
+    .status {
+      min-height: 22px;
+      color: #47564f;
+      font-size: 13px;
+    }
+
+    .layout {
+      height: 100%;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(320px, 1fr) minmax(300px, 420px);
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .layout > .panel {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .code {
+      min-height: 0;
+      overflow: auto;
+    }
+
+    .instruction {
+      display: grid;
+      grid-template-columns: 72px 70px minmax(0, 1fr);
+      gap: 10px;
+      padding: 7px 12px;
+      border-bottom: 1px solid #edf1ee;
+      font: 13px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+
+    .instruction.current {
+      background: #dff0eb;
+      box-shadow: inset 4px 0 0 #1e685d;
+    }
+
+    .instruction .pc {
+      color: #62736b;
+    }
+
+    .instruction .bytes {
+      color: #8a5b20;
+    }
+
+    .instruction .op {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .state-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .memory-dump {
+      width: 100%;
+      min-height: 96px;
+      max-height: 128px;
+      overflow: auto;
+      margin: 0;
+      padding: 8px;
+      border: 1px solid #e3e9e5;
+      border-radius: 6px;
+      background: #fbfcfb;
+      font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      white-space: pre;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font: 13px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+
+    th,
+    td {
+      padding: 6px 7px;
+      border-bottom: 1px solid #edf1ee;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    th {
+      color: #52615a;
+      font: 12px/1.2 ui-sans-serif, system-ui, sans-serif;
+      font-weight: 700;
+    }
+
+    .stack-list,
+    .call-list {
+      display: grid;
+      gap: 6px;
+      min-height: 44px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      font: 13px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+
+    .stack-list li,
+    .call-list li {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      min-width: 0;
+      padding: 6px 8px;
+      border: 1px solid #e3e9e5;
+      border-radius: 6px;
+      background: #fbfcfb;
+    }
+
+    .muted {
+      color: #738179;
+    }
+
+    .log {
+      width: 100%;
+      height: 96px;
+      resize: vertical;
+      border: 1px solid #d4dcd7;
+      border-radius: 6px;
+      padding: 8px;
+      font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+
+    .links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      align-items: center;
+      font-size: 13px;
+    }
+
+    @media (max-width: 980px) {
+      body {
+        height: auto;
+        min-height: 100vh;
+        overflow: auto;
+      }
+
+      main {
+        height: auto;
+      }
+
+      main,
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .code {
+        height: auto;
+        min-height: 360px;
+        max-height: 52vh;
+      }
+    }
+
+    @media (max-width: 620px) {
+      header {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 1fr;
+      }
+
+      .panel-head {
+        grid-template-columns: 1fr;
+      }
+
+      .state-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .instruction {
+        grid-template-columns: 58px 52px minmax(0, 1fr);
+        gap: 6px;
+        padding: 7px 8px;
+        font-size: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Wasmrun Step Debugger</h1>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>Run</h2>
+      <div class="panel-body controls">
+        <input id="file" type="file" accept=".wasm,application/wasm">
+        <div id="dropzone" class="dropzone" role="button" tabindex="0">.wasm をドロップ、またはクリックして開く</div>
+        <div class="row">
+          <button id="sample-add" type="button">add</button>
+          <button id="sample-fact" type="button">fact</button>
+          <button id="sample-max" type="button">max</button>
+          <button id="sample-gstack" type="button">gstack</button>
+        </div>
+        <div class="row">
+          <label>
+            export
+            <select id="export"></select>
+          </label>
+          <label>
+            i32 args
+            <input id="args" type="text" spellcheck="false" placeholder="40 2">
+          </label>
+        </div>
+        <div class="row">
+          <button id="reset" type="button" disabled>Reset</button>
+          <button id="step" class="primary" type="button" disabled>Step</button>
+          <button id="run" type="button" disabled>Run</button>
+          <button id="stop" type="button" disabled>Stop</button>
+        </div>
+        <div id="status" class="status" role="status"></div>
+        <textarea id="log" class="log" readonly spellcheck="false" aria-label="Log"></textarea>
+      </div>
+    </section>
+
+    <section class="layout">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Instructions</h2>
+          <select id="func-view" aria-label="Function view"></select>
+        </div>
+        <div id="code" class="code"></div>
+      </div>
+      <div class="controls">
+        <div class="panel">
+          <h2>Variable View</h2>
+          <div class="panel-body state-grid">
+            <div>
+              <table>
+                <thead><tr><th>local</th><th>i32</th></tr></thead>
+                <tbody id="locals"></tbody>
+              </table>
+            </div>
+            <div>
+              <table>
+                <thead><tr><th>global</th><th>i32</th></tr></thead>
+                <tbody id="globals"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Memory View</h2>
+          <div class="panel-body">
+            <pre id="memory" class="memory-dump"></pre>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Operand Stack</h2>
+          <div class="panel-body">
+            <ul id="stack" class="stack-list"></ul>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Call Stack</h2>
+          <div class="panel-body">
+            <ul id="calls" class="call-list"></ul>
+          </div>
+        </div>
+        <div class="links">
+          <a href="https://github.com/code4fukui/wasmrun">src on GitHub</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module">
+    import { Wasmrun } from "./Wasmrun.js";
+
+    const OPCODES = new Map([
+      [0x02, "block"], [0x03, "loop"], [0x04, "if"], [0x05, "else"],
+      [0x0b, "end"], [0x0c, "br"], [0x0d, "br_if"], [0x0f, "return"],
+      [0x10, "call"], [0x1a, "drop"], [0x1b, "select"], [0x20, "local.get"],
+      [0x21, "local.set"], [0x22, "local.tee"], [0x23, "global.get"],
+      [0x24, "global.set"], [0x41, "i32.const"], [0x45, "i32.eqz"],
+      [0x28, "i32.load"], [0x36, "i32.store"],
+      [0x46, "i32.eq"], [0x47, "i32.ne"], [0x48, "i32.lt_s"],
+      [0x49, "i32.lt_u"], [0x4a, "i32.gt_s"], [0x4b, "i32.gt_u"],
+      [0x4c, "i32.le_s"], [0x4d, "i32.le_u"], [0x4e, "i32.ge_s"],
+      [0x4f, "i32.ge_u"], [0x6a, "i32.add"], [0x6b, "i32.sub"],
+      [0x6c, "i32.mul"], [0x6d, "i32.div_s"], [0x6e, "i32.div_u"],
+      [0x6f, "i32.rem_s"], [0x70, "i32.rem_u"], [0x71, "i32.and"],
+      [0x72, "i32.or"], [0x73, "i32.xor"], [0x74, "i32.shl"],
+      [0x75, "i32.shr_u"], [0x76, "i32.shr_s"],
+    ]);
+
+    const el = (id) => document.getElementById(id);
+    const fileInput = el("file");
+    const dropzone = el("dropzone");
+    const exportSelect = el("export");
+    const funcViewSelect = el("func-view");
+    const argsInput = el("args");
+    const resetButton = el("reset");
+    const stepButton = el("step");
+    const runButton = el("run");
+    const stopButton = el("stop");
+    const status = el("status");
+    const log = el("log");
+    const code = el("code");
+    const localsBody = el("locals");
+    const globalsBody = el("globals");
+    const memoryBody = el("memory");
+    const stackList = el("stack");
+    const callsList = el("calls");
+
+    let wasm = new Wasmrun();
+    let debug = null;
+    let bytes = null;
+    let running = false;
+    let lastName = "";
+    let followCurrentFunc = true;
+
+    class Reader {
+      constructor(data, p = 0, end = data.length) {
+        this.data = data;
+        this.p = p;
+        this.end = end;
+      }
+    }
+
+    const u8 = (r) => {
+      if (r.p >= r.end) throw new Error("unexpected eof");
+      return r.data[r.p++];
+    };
+
+    const leb = (r) => {
+      let x = 0;
+      let s = 0;
+      for (;;) {
+        const b = u8(r);
+        x = (x | ((b & 127) << s)) >>> 0;
+        if (!(b & 128)) return x;
+        s += 7;
+        if (s >= 35) throw new Error("bad leb128");
+      }
+    };
+
+    const sleb = (r) => {
+      let x = 0;
+      let s = 0;
+      let b = 0;
+      do {
+        b = u8(r);
+        x |= (b & 127) << s;
+        s += 7;
+      } while (b & 128);
+      if (s < 32 && (b & 64)) x |= -(1 << s);
+      return x | 0;
+    };
+
+    const readImmediate = (r, op) => {
+      if (op === 0x41) return sleb(r);
+      if ([0x0c, 0x0d, 0x10, 0x20, 0x21, 0x22, 0x23, 0x24].includes(op)) {
+        return leb(r);
+      }
+      if (op === 0x28 || op === 0x36) return `${leb(r)} ${leb(r)}`;
+      if (op === 0x02 || op === 0x03 || op === 0x04) return sleb(r);
+      return null;
+    };
+
+    const decodeFunction = (data, f) => {
+      if (!f || f.imported) return [];
+      const r = new Reader(data, f.codeStart, f.codeEnd);
+      const out = [];
+      while (r.p < r.end) {
+        const pc = r.p;
+        const op = u8(r);
+        const imm = readImmediate(r, op);
+        out.push({
+          pc,
+          next: r.p,
+          op,
+          imm,
+          bytes: Array.from(data.subarray(pc, r.p)).map((b) => b.toString(16).padStart(2, "0")).join(" "),
+          text: `${OPCODES.get(op) ?? `0x${op.toString(16)}`}${imm == null ? "" : ` ${imm}`}`,
+        });
+      }
+      return out;
+    };
+
+    const findEnd = (data, p, end) => {
+      let depth = 1;
+      const r = new Reader(data, p, end);
+      while (r.p < r.end) {
+        const op = u8(r);
+        if (op === 0x02 || op === 0x03 || op === 0x04) {
+          sleb(r);
+          depth++;
+        } else if (op === 0x0b && --depth === 0) {
+          return r.p - 1;
+        } else {
+          readImmediate(r, op);
+        }
+      }
+      throw new Error("missing end");
+    };
+
+    const findElseEnd = (data, p, end) => {
+      let depth = 1;
+      const r = new Reader(data, p, end);
+      let elsep = null;
+      while (r.p < r.end) {
+        const pos = r.p;
+        const op = u8(r);
+        if (op === 0x02 || op === 0x03 || op === 0x04) {
+          sleb(r);
+          depth++;
+        } else if (op === 0x05 && depth === 1) {
+          elsep = pos;
+        } else if (op === 0x0b && --depth === 0) {
+          return { elsep, endp: pos };
+        } else {
+          readImmediate(r, op);
+        }
+      }
+      throw new Error("missing if end");
+    };
+
+    const binaryI32 = (frame, fn) => {
+      const b = frame.st.pop() | 0;
+      const a = frame.st.pop() | 0;
+      frame.st.push(fn(a, b) | 0);
+    };
+
+    class DebugSession {
+      constructor(runtime, data, entry, args) {
+        this.runtime = runtime;
+        this.data = data;
+        this.frames = [];
+        this.done = false;
+        this.result = null;
+        this.instructions = new Map();
+        this.enter(entry, args);
+      }
+
+      enter(fi, args) {
+        const f = this.runtime.funcs[fi];
+        const sig = this.runtime.types[f.type];
+        if (f.imported) {
+          if (!f.host) throw new Error(`unbound import ${f.importModule}.${f.importName}`);
+          const rv = f.host(this.runtime, f.hostUser, args);
+          return sig.resultType === 0x7f ? (rv || 0) | 0 : null;
+        }
+        const locals = new Int32Array(sig.nparams + f.locals.length);
+        for (let i = 0; i < sig.nparams; i++) locals[i] = (args[i] || 0) | 0;
+        if (!this.instructions.has(fi)) this.instructions.set(fi, decodeFunction(this.data, f));
+        this.frames.push({ fi, sig, f, pc: f.codeStart, locals, st: [], cs: [] });
+        return null;
+      }
+
+      current() {
+        return this.frames[this.frames.length - 1] ?? null;
+      }
+
+      finishFrame(value = null) {
+        this.frames.pop();
+        const caller = this.current();
+        if (caller) {
+          if (value != null) caller.st.push(value | 0);
+        } else {
+          this.done = true;
+          this.result = value;
+        }
+      }
+
+      returnResult(frame) {
+        const hasResult = frame.sig.resultType === 0x7f;
+        this.finishFrame(hasResult ? frame.st[frame.st.length - 1] | 0 : null);
+      }
+
+      step() {
+        if (this.done) return;
+        const frame = this.current();
+        if (!frame) {
+          this.done = true;
+          return;
+        }
+        const pc = new Reader(this.data, frame.pc, frame.f.codeEnd);
+        const op = u8(pc);
+        frame.pc = pc.p;
+
+        switch (op) {
+          case 0x0b:
+            if (frame.cs.length) {
+              frame.st.length = frame.cs.pop().height;
+              break;
+            }
+            this.returnResult(frame);
+            break;
+          case 0x0f:
+            this.returnResult(frame);
+            break;
+          case 0x1a:
+            frame.st.pop();
+            break;
+          case 0x1b: {
+            const c = frame.st.pop();
+            const b = frame.st.pop();
+            const a = frame.st.pop();
+            frame.st.push(c ? a : b);
+            break;
+          }
+          case 0x02:
+          case 0x03: {
+            sleb(pc);
+            const endp = findEnd(this.data, pc.p, pc.end);
+            frame.cs.push({ op, start: pc.p, end: endp, height: frame.st.length });
+            frame.pc = pc.p;
+            break;
+          }
+          case 0x04: {
+            sleb(pc);
+            const cond = frame.st.pop();
+            const found = findElseEnd(this.data, pc.p, pc.end);
+            if (cond) {
+              frame.cs.push({ op, start: pc.p, end: found.endp, height: frame.st.length });
+              frame.pc = pc.p;
+            } else if (found.elsep != null) {
+              frame.pc = found.elsep + 1;
+              frame.cs.push({ op, start: frame.pc, end: found.endp, height: frame.st.length });
+            } else {
+              frame.pc = found.endp + 1;
+            }
+            break;
+          }
+          case 0x05: {
+            if (!frame.cs.length || frame.cs[frame.cs.length - 1].op !== 0x04) {
+              throw new Error("stray else");
+            }
+            const c = frame.cs.pop();
+            frame.st.length = c.height;
+            frame.pc = c.end + 1;
+            break;
+          }
+          case 0x0c: {
+            const d = leb(pc);
+            if (d >= frame.cs.length) throw new Error("bad branch depth");
+            const c = frame.cs[frame.cs.length - 1 - d];
+            frame.st.length = c.height;
+            frame.pc = c.op === 0x03 ? c.start : c.end + 1;
+            frame.cs.length -= d + (c.op === 0x03 ? 0 : 1);
+            break;
+          }
+          case 0x0d: {
+            const d = leb(pc);
+            if (frame.st.pop()) {
+              if (d >= frame.cs.length) throw new Error("bad branch depth");
+              const c = frame.cs[frame.cs.length - 1 - d];
+              frame.st.length = c.height;
+              frame.pc = c.op === 0x03 ? c.start : c.end + 1;
+              frame.cs.length -= d + (c.op === 0x03 ? 0 : 1);
+            } else {
+              frame.pc = pc.p;
+            }
+            break;
+          }
+          case 0x10: {
+            const callee = leb(pc);
+            const t = this.runtime.types[this.runtime.funcs[callee].type];
+            const av = new Int32Array(t.nparams);
+            for (let i = t.nparams - 1; i >= 0; i--) av[i] = frame.st.pop() | 0;
+            frame.pc = pc.p;
+            const result = this.enter(callee, av);
+            if (result != null) frame.st.push(result);
+            break;
+          }
+          case 0x20:
+            frame.st.push(frame.locals[leb(pc)] | 0);
+            frame.pc = pc.p;
+            break;
+          case 0x21:
+            frame.locals[leb(pc)] = frame.st.pop() | 0;
+            frame.pc = pc.p;
+            break;
+          case 0x22:
+            frame.locals[leb(pc)] = frame.st[frame.st.length - 1] | 0;
+            frame.pc = pc.p;
+            break;
+          case 0x23:
+            frame.st.push(this.runtime.globals[leb(pc)].value | 0);
+            frame.pc = pc.p;
+            break;
+          case 0x24: {
+            const i = leb(pc);
+            if (!this.runtime.globals[i].mut) throw new Error("immutable global set");
+            this.runtime.globals[i].value = frame.st.pop() | 0;
+            frame.pc = pc.p;
+            break;
+          }
+          case 0x28: {
+            leb(pc);
+            const offset = leb(pc);
+            const addr = ((frame.st.pop() >>> 0) + offset) >>> 0;
+            if (!this.runtime.memory) throw new Error("no memory");
+            if (addr > this.runtime.memory.length - 4) throw new Error("memory out of bounds");
+            frame.st.push((
+              this.runtime.memory[addr] |
+              (this.runtime.memory[addr + 1] << 8) |
+              (this.runtime.memory[addr + 2] << 16) |
+              (this.runtime.memory[addr + 3] << 24)
+            ) | 0);
+            frame.pc = pc.p;
+            break;
+          }
+          case 0x36: {
+            leb(pc);
+            const offset = leb(pc);
+            const value = frame.st.pop() | 0;
+            const addr = ((frame.st.pop() >>> 0) + offset) >>> 0;
+            if (!this.runtime.memory) throw new Error("no memory");
+            if (addr > this.runtime.memory.length - 4) throw new Error("memory out of bounds");
+            this.runtime.memory[addr] = value & 255;
+            this.runtime.memory[addr + 1] = (value >>> 8) & 255;
+            this.runtime.memory[addr + 2] = (value >>> 16) & 255;
+            this.runtime.memory[addr + 3] = (value >>> 24) & 255;
+            frame.pc = pc.p;
+            break;
+          }
+          case 0x41:
+            frame.st.push(sleb(pc));
+            frame.pc = pc.p;
+            break;
+          case 0x45:
+            frame.st[frame.st.length - 1] = frame.st[frame.st.length - 1] ? 0 : 1;
+            break;
+          case 0x46: binaryI32(frame, (a, b) => a === b ? 1 : 0); break;
+          case 0x47: binaryI32(frame, (a, b) => a !== b ? 1 : 0); break;
+          case 0x48: binaryI32(frame, (a, b) => a < b ? 1 : 0); break;
+          case 0x49: binaryI32(frame, (a, b) => (a >>> 0) < (b >>> 0) ? 1 : 0); break;
+          case 0x4a: binaryI32(frame, (a, b) => a > b ? 1 : 0); break;
+          case 0x4b: binaryI32(frame, (a, b) => (a >>> 0) > (b >>> 0) ? 1 : 0); break;
+          case 0x4c: binaryI32(frame, (a, b) => a <= b ? 1 : 0); break;
+          case 0x4d: binaryI32(frame, (a, b) => (a >>> 0) <= (b >>> 0) ? 1 : 0); break;
+          case 0x4e: binaryI32(frame, (a, b) => a >= b ? 1 : 0); break;
+          case 0x4f: binaryI32(frame, (a, b) => (a >>> 0) >= (b >>> 0) ? 1 : 0); break;
+          case 0x6a: binaryI32(frame, (a, b) => a + b); break;
+          case 0x6b: binaryI32(frame, (a, b) => a - b); break;
+          case 0x6c: binaryI32(frame, (a, b) => Math.imul(a, b)); break;
+          case 0x6d:
+            binaryI32(frame, (a, b) => {
+              if (!b) throw new Error("division by zero");
+              return Math.trunc(a / b);
+            });
+            break;
+          case 0x6e:
+            binaryI32(frame, (a, b) => {
+              if (!b) throw new Error("division by zero");
+              return Math.trunc((a >>> 0) / (b >>> 0));
+            });
+            break;
+          case 0x6f:
+            binaryI32(frame, (a, b) => {
+              if (!b) throw new Error("remainder by zero");
+              return a % b;
+            });
+            break;
+          case 0x70:
+            binaryI32(frame, (a, b) => {
+              if (!b) throw new Error("remainder by zero");
+              return (a >>> 0) % (b >>> 0);
+            });
+            break;
+          case 0x71: binaryI32(frame, (a, b) => a & b); break;
+          case 0x72: binaryI32(frame, (a, b) => a | b); break;
+          case 0x73: binaryI32(frame, (a, b) => a ^ b); break;
+          case 0x74: binaryI32(frame, (a, b) => a << (b & 31)); break;
+          case 0x75: binaryI32(frame, (a, b) => a >>> (b & 31)); break;
+          case 0x76: binaryI32(frame, (a, b) => a >> (b & 31)); break;
+          default:
+            throw new Error(`unsupported opcode 0x${op.toString(16).padStart(2, "0")}`);
+        }
+      }
+    }
+
+    const setStatus = (message) => {
+      status.textContent = message;
+    };
+
+    const appendLog = (message) => {
+      log.value += `${message}\n`;
+      log.scrollTop = log.scrollHeight;
+    };
+
+    const parseArgs = (func) => {
+      const n = wasm.paramCount(func);
+      const raw = argsInput.value.trim() ? argsInput.value.trim().split(/\s+/) : [];
+      if (raw.length < n) throw new Error(`missing i32 args: ${n} required`);
+      return raw.slice(0, n).map((v) => Number.parseInt(v, 0) | 0);
+    };
+
+    const renderCode = () => {
+      const frame = debug?.current();
+      if (frame && followCurrentFunc && funcViewSelect.value !== String(frame.fi)) {
+        funcViewSelect.value = String(frame.fi);
+      }
+      const fi = Number(funcViewSelect.value);
+      const instructions = Number.isFinite(fi) ? decodeFunction(bytes ?? new Uint8Array(), wasm.funcs[fi]) : [];
+      code.innerHTML = "";
+      if (!instructions.length) {
+        code.innerHTML = `<div class="instruction"><span></span><span></span><span class="muted">no function body</span></div>`;
+        return;
+      }
+      const frag = document.createDocumentFragment();
+      for (const ins of instructions) {
+        const row = document.createElement("div");
+        row.className = `instruction${frame?.pc === ins.pc ? " current" : ""}`;
+        row.dataset.pc = String(ins.pc);
+        row.innerHTML = `<span class="pc">${ins.pc}</span><span class="bytes">${ins.bytes}</span><span class="op">${ins.text}</span>`;
+        frag.append(row);
+      }
+      code.append(frag);
+      const current = code.querySelector(".current");
+      if (current) current.scrollIntoView({ block: "nearest" });
+    };
+
+    const renderState = () => {
+      const frame = debug?.current();
+      const locals = frame ? Array.from(frame.locals) : [];
+      localsBody.innerHTML = locals.length
+        ? locals.map((v, i) => `<tr><td>${i}</td><td>${v}</td></tr>`).join("")
+        : `<tr><td colspan="2" class="muted">empty</td></tr>`;
+      globalsBody.innerHTML = wasm.globals.length
+        ? wasm.globals.map((g, i) => `<tr><td>${i}${g.mut ? "" : " const"}</td><td>${g.value | 0}</td></tr>`).join("")
+        : `<tr><td colspan="2" class="muted">empty</td></tr>`;
+      if (wasm.memory) {
+        const lines = [];
+        const limit = Math.min(128, wasm.memory.length);
+        for (let addr = 0; addr < limit; addr += 8) {
+          const chunk = wasm.memory.subarray(addr, Math.min(addr + 8, limit));
+          const hex = Array.from(chunk).map((b) => b.toString(16).padStart(2, "0"));
+          const bytes = hex.join(" ");
+          lines.push(`${addr.toString(16).padStart(8, "0")}  ${bytes}`);
+        }
+        memoryBody.textContent = lines.join("\n");
+      } else {
+        memoryBody.textContent = "empty";
+      }
+      stackList.innerHTML = frame?.st.length
+        ? frame.st.map((v, i) => `<li><span>${i}</span><strong>${v | 0}</strong></li>`).reverse().join("")
+        : `<li><span class="muted">empty</span><span></span></li>`;
+      callsList.innerHTML = debug?.frames.length
+        ? debug.frames.map((fr, i) => `<li><span>#${i}</span><strong>func ${fr.fi} pc ${fr.pc}</strong></li>`).reverse().join("")
+        : `<li><span class="muted">empty</span><span></span></li>`;
+      renderCode();
+      const active = Boolean(bytes && debug && !debug.done);
+      resetButton.disabled = !bytes || running;
+      stepButton.disabled = !active || running;
+      runButton.disabled = !active || running;
+      stopButton.disabled = !running;
+    };
+
+    const resetSession = () => {
+      if (!bytes) return;
+      const func = Number(exportSelect.value);
+      const args = parseArgs(func);
+      wasm = new Wasmrun();
+      if (!wasm.load(bytes)) throw new Error(wasm.error());
+      bindImports();
+      debug = new DebugSession(wasm, bytes, func, args);
+      funcViewSelect.value = String(func);
+      followCurrentFunc = true;
+      setStatus(`ready: ${lastName} / func ${func}`);
+      renderState();
+    };
+
+    const bindImports = () => {
+      for (let i = 0; i < wasm.nimports; i++) {
+        const f = wasm.funcs[i];
+        if (f.importModule === "env" && f.importName === "putchar") {
+          wasm.setImportFunc("env", "putchar", (_m, _user, args) => {
+            appendLog(String.fromCharCode(args[0] & 255));
+            return 0;
+          });
+        }
+      }
+    };
+
+    const loadBytes = (data, name) => {
+      bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+      lastName = name;
+      wasm = new Wasmrun();
+      if (!wasm.load(bytes)) throw new Error(wasm.error());
+      bindImports();
+      exportSelect.innerHTML = wasm.exports
+        .map((ex) => `<option value="${ex.func}">${ex.name} (func ${ex.func})</option>`)
+        .join("");
+      const exportNames = new Map(wasm.exports.map((ex) => [ex.func, ex.name]));
+      funcViewSelect.innerHTML = wasm.funcs.map((f, i) => {
+        const label = exportNames.has(i)
+          ? `${exportNames.get(i)} (func ${i})`
+          : f.imported
+          ? `${f.importModule}.${f.importName} (func ${i})`
+          : `func ${i}`;
+        return `<option value="${i}">${label}</option>`;
+      }).join("");
+      if (!wasm.exports.length) throw new Error("no function exports");
+      const first = wasm.exports.find((ex) => ex.name === "main") ?? wasm.exports.find((ex) => ex.name === "_start") ?? wasm.exports[0];
+      exportSelect.value = String(first.func);
+      funcViewSelect.value = String(first.func);
+      followCurrentFunc = true;
+      log.value = "";
+      resetSession();
+    };
+
+    const stepOnce = () => {
+      try {
+        followCurrentFunc = true;
+        debug.step();
+        if (debug.done) {
+          setStatus(debug.result == null ? "done" : `done: ${debug.result}`);
+          appendLog(debug.result == null ? "done" : `result ${debug.result}`);
+        }
+      } catch (e) {
+        debug.done = true;
+        setStatus(e.message);
+        appendLog(`error: ${e.message}`);
+      }
+      renderState();
+    };
+
+    const runLoop = async () => {
+      running = true;
+      renderState();
+      let count = 0;
+      while (running && debug && !debug.done) {
+        stepOnce();
+        count++;
+        if (count % 120 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      running = false;
+      renderState();
+    };
+
+    const openFile = async (file) => {
+      loadBytes(await file.arrayBuffer(), file.name || "dropped wasm");
+    };
+
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files?.[0];
+      if (file) await openFile(file);
+      fileInput.value = "";
+    });
+    dropzone.addEventListener("click", () => fileInput.click());
+    dropzone.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        fileInput.click();
+      }
+    });
+
+    for (const event of ["dragenter", "dragover"]) {
+      dropzone.addEventListener(event, (e) => {
+        e.preventDefault();
+        dropzone.classList.add("dragover");
+      });
+    }
+    dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
+    dropzone.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      dropzone.classList.remove("dragover");
+      const file = e.dataTransfer.files?.[0];
+      if (file) await openFile(file);
+    });
+
+    exportSelect.addEventListener("change", () => {
+      try {
+        resetSession();
+      } catch (e) {
+        setStatus(e.message);
+      }
+    });
+    funcViewSelect.addEventListener("change", () => {
+      const frame = debug?.current();
+      followCurrentFunc = Boolean(frame && funcViewSelect.value === String(frame.fi));
+      renderCode();
+    });
+    argsInput.addEventListener("change", () => {
+      try {
+        resetSession();
+      } catch (e) {
+        setStatus(e.message);
+      }
+    });
+    resetButton.addEventListener("click", () => {
+      try {
+        resetSession();
+      } catch (e) {
+        setStatus(e.message);
+      }
+    });
+    stepButton.addEventListener("click", stepOnce);
+    runButton.addEventListener("click", runLoop);
+    stopButton.addEventListener("click", () => {
+      running = false;
+      setStatus("stopped");
+    });
+
+    el("sample-add").addEventListener("click", async () => {
+      argsInput.value = "40 2";
+      loadBytes(await (await fetch("./examples/add.wasm")).arrayBuffer(), "examples/add.wasm");
+    });
+    el("sample-fact").addEventListener("click", async () => {
+      argsInput.value = "5";
+      loadBytes(await (await fetch("./examples/fact.wasm")).arrayBuffer(), "examples/fact.wasm");
+    });
+    el("sample-max").addEventListener("click", async () => {
+      argsInput.value = "3 -5";
+      loadBytes(await (await fetch("./examples/max.wasm")).arrayBuffer(), "examples/max.wasm");
+    });
+    el("sample-gstack").addEventListener("click", async () => {
+      argsInput.value = "";
+      loadBytes(await (await fetch("./examples/gstack.wasm")).arrayBuffer(), "examples/gstack.wasm");
+    });
+
+    renderState();
+    setStatus("load a wasm file");
+  </script>
+</body>
+</html>

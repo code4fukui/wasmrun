@@ -9,12 +9,12 @@ C と JavaScript で実装したシンプルなwasmランタイム
 現状は学習用の小さな整数限定ランタイムです。
 
 - Wasm binary v1 のみ
-- 対応 section は type / import / function / global / export / code のみ
+- 対応 section は type / import / function / memory / global / export / code / data のみ
 - 値型は `i32` のみ
 - 関数の戻り値は 0 個または `i32` 1 個のみ
-- 対応命令は `i32.const`、local get/set/tee、global get/set、i32 算術、比較、ビット演算、shift、`call`、`return`、`drop`、`select`、`block`、`loop`、戻り値なしの `if`/`else`、`br`、`br_if`
+- 対応命令は `i32.const`、local get/set/tee、global get/set、`i32.load`、`i32.store`、i32 算術、比較、ビット演算、shift、`call`、`return`、`drop`、`select`、`block`、`loop`、戻り値なしの `if`/`else`、`br`、`br_if`
 - function import は host callback に bind 可能
-- memory 命令 / global export / table / float / SIMD / multi-value は未対応
+- memory growth / global export / table / float / SIMD / multi-value は未対応
 - 厳密な検証器ではないため、不正な wasm の安全な実行は目的外
 
 ## build

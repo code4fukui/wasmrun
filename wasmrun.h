@@ -13,6 +13,8 @@
 #define WASMRUN_MAX_PARAMS 16
 #define WASMRUN_MAX_LOCALS 256
 #define WASMRUN_MAX_GLOBALS 64
+#define WASMRUN_PAGE_SIZE 65536
+#define WASMRUN_MAX_MEMORY_PAGES 16
 
 typedef struct Wasmrun Wasmrun;
 typedef int (*WasmrunHostFunc)(Wasmrun *m, void *user, const int32_t *args, int32_t *result);
@@ -55,6 +57,8 @@ struct Wasmrun {
   uint32_t nglobals;
   WasmrunExport exports[WASMRUN_MAX_EXPORTS];
   uint32_t nexports;
+  uint8_t *memory;
+  uint32_t memory_size;
   const char *error;
 };
 
@@ -115,6 +119,10 @@ static int wasmrun_skip_immediate_(Wasmrun *m, WasmrunR *r, uint8_t op) {
       op == 0x22 || op == 0x23 || op == 0x24) {
     uint32_t x; return wasmrun_leb_(m, r, &x);
   }
+  if (op == 0x28 || op == 0x36) {
+    uint32_t align, offset;
+    return wasmrun_leb_(m, r, &align) && wasmrun_leb_(m, r, &offset);
+  }
   if (op == 0x41) {
     int32_t x; return wasmrun_sleb_(m, r, &x);
   }
@@ -152,6 +160,7 @@ static inline void wasmrun_free(Wasmrun *m) {
     free(m->funcs[i].import_name);
   }
   for (uint32_t i = 0; i < m->nexports; i++) free(m->exports[i].name);
+  free(m->memory);
   wasmrun_init(m);
 }
 
@@ -222,6 +231,20 @@ static inline int wasmrun_load(Wasmrun *m, const uint8_t *data, size_t len) {
         if (endop != 0x0b) return wasmrun_fail_(m, "bad global init");
         m->globals[i].mut = mut;
       }
+    } else if (id == 5) {
+      uint32_t nm;
+      if (!wasmrun_leb_(m, &s, &nm)) return 0;
+      if (nm > 1) return wasmrun_fail_(m, "only one memory");
+      if (nm == 1) {
+        uint32_t flags, min, max;
+        if (!wasmrun_leb_(m, &s, &flags) || !wasmrun_leb_(m, &s, &min)) return 0;
+        if (flags > 1) return wasmrun_fail_(m, "bad memory limits");
+        if (flags == 1 && !wasmrun_leb_(m, &s, &max)) return 0;
+        if (min > WASMRUN_MAX_MEMORY_PAGES) return wasmrun_fail_(m, "memory too large");
+        m->memory_size = min * WASMRUN_PAGE_SIZE;
+        m->memory = calloc(1, m->memory_size);
+        if (!m->memory && m->memory_size) return wasmrun_fail_(m, "oom");
+      }
     } else if (id == 10) {
       uint32_t nf, first = m->nimports;
       if (!wasmrun_leb_(m, &s, &nf)) return 0;
@@ -236,6 +259,27 @@ static inline int wasmrun_load(Wasmrun *m, const uint8_t *data, size_t len) {
           while (c--) m->funcs[first + i].locals[nl++] = vt;
         }
         m->funcs[first + i].nlocals = nl; m->funcs[first + i].code = b.p; m->funcs[first + i].end = b.end; s.p += n;
+      }
+    } else if (id == 11) {
+      uint32_t nd;
+      if (!wasmrun_leb_(m, &s, &nd)) return 0;
+      for (uint32_t i = 0; i < nd; i++) {
+        uint32_t flags, n;
+        int32_t offset;
+        uint8_t op, endop;
+        const uint8_t *p;
+        if (!wasmrun_leb_(m, &s, &flags)) return 0;
+        if (flags != 0) return wasmrun_fail_(m, "only active memory data");
+        if (!wasmrun_u8_(m, &s, &op)) return 0;
+        if (op != 0x41) return wasmrun_fail_(m, "only i32.const data offset");
+        if (!wasmrun_sleb_(m, &s, &offset) || !wasmrun_u8_(m, &s, &endop)) return 0;
+        if (endop != 0x0b) return wasmrun_fail_(m, "bad data offset");
+        if (!wasmrun_leb_(m, &s, &n) || !wasmrun_bytes_(m, &s, &p, n)) return 0;
+        if (!m->memory) return wasmrun_fail_(m, "data without memory");
+        if (offset < 0 || (uint32_t)offset > m->memory_size || n > m->memory_size - (uint32_t)offset) {
+          return wasmrun_fail_(m, "data out of bounds");
+        }
+        memcpy(m->memory + offset, p, n);
       }
     }
     r.p += size;
@@ -328,6 +372,31 @@ static int wasmrun_call_func_(Wasmrun *m, uint32_t fi, const int32_t *args, int3
       if (i >= m->nglobals) return wasmrun_fail_(m, "bad global index");
       if (!m->globals[i].mut) return wasmrun_fail_(m, "immutable global set");
       m->globals[i].value = st[--sp]; break;
+    }
+    case 0x28: {
+      uint32_t align, offset;
+      if (!wasmrun_leb_(m, &pc, &align) || !wasmrun_leb_(m, &pc, &offset)) return 0;
+      uint32_t addr = (uint32_t)st[--sp] + offset;
+      if (!m->memory) return wasmrun_fail_(m, "no memory");
+      if (addr > m->memory_size || 4 > m->memory_size - addr) return wasmrun_fail_(m, "memory out of bounds");
+      st[sp++] = (int32_t)((uint32_t)m->memory[addr] |
+                           (uint32_t)m->memory[addr + 1] << 8 |
+                           (uint32_t)m->memory[addr + 2] << 16 |
+                           (uint32_t)m->memory[addr + 3] << 24);
+      break;
+    }
+    case 0x36: {
+      uint32_t align, offset;
+      if (!wasmrun_leb_(m, &pc, &align) || !wasmrun_leb_(m, &pc, &offset)) return 0;
+      int32_t value = st[--sp];
+      uint32_t addr = (uint32_t)st[--sp] + offset;
+      if (!m->memory) return wasmrun_fail_(m, "no memory");
+      if (addr > m->memory_size || 4 > m->memory_size - addr) return wasmrun_fail_(m, "memory out of bounds");
+      m->memory[addr] = (uint8_t)value;
+      m->memory[addr + 1] = (uint8_t)((uint32_t)value >> 8);
+      m->memory[addr + 2] = (uint8_t)((uint32_t)value >> 16);
+      m->memory[addr + 3] = (uint8_t)((uint32_t)value >> 24);
+      break;
     }
     case 0x41: { int32_t v; if (!wasmrun_sleb_(m, &pc, &v)) return 0; st[sp++] = v; break; }
     case 0x45: st[sp - 1] = !st[sp - 1]; break;
