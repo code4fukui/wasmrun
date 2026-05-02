@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>native putchar wasm</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #161616;
+      background: #f5f7f8;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      background:
+        linear-gradient(90deg, rgba(19, 111, 99, 0.08) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(19, 111, 99, 0.08) 1px, transparent 1px),
+        #f5f7f8;
+      background-size: 28px 28px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 24px;
+      border-bottom: 1px solid #d8dedc;
+      background: rgba(255, 255, 255, 0.88);
+      backdrop-filter: blur(10px);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    button,
+    .file-button {
+      min-width: 44px;
+      height: 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #aab6b2;
+      border-radius: 6px;
+      padding: 0 14px;
+      color: #10201d;
+      background: #ffffff;
+      font: inherit;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    button.primary {
+      border-color: #146b5f;
+      color: #ffffff;
+      background: #146b5f;
+    }
+
+    button:disabled {
+      cursor: wait;
+      opacity: 0.65;
+    }
+
+    input[type="file"] {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+
+    main {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      gap: 12px;
+      padding: 20px 24px 24px;
+    }
+
+    .dropzone {
+      min-height: 120px;
+      display: grid;
+      place-items: center;
+      border: 2px dashed #8aa39d;
+      border-radius: 8px;
+      padding: 22px;
+      color: #32423f;
+      background: rgba(255, 255, 255, 0.72);
+      text-align: center;
+      font-size: 15px;
+    }
+
+    .dropzone.dragover {
+      border-color: #146b5f;
+      background: #e7f2ef;
+    }
+
+    .status {
+      min-height: 24px;
+      color: #475653;
+      font-size: 14px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 300px;
+      height: 100%;
+      resize: none;
+      border: 1px solid #aeb8b5;
+      border-radius: 6px;
+      padding: 16px;
+      color: #111817;
+      background: #ffffff;
+      font: 18px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);
+    }
+
+    textarea:focus {
+      outline: 2px solid #3b8f82;
+      outline-offset: 2px;
+    }
+
+    @media (max-width: 620px) {
+      header {
+        align-items: stretch;
+        flex-direction: column;
+        padding: 16px;
+      }
+
+      .actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+      }
+
+      main {
+        padding: 16px;
+      }
+
+      button,
+      .file-button {
+        width: 100%;
+        padding: 0 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>native putchar wasm</h1>
+    <div class="actions">
+      <label class="file-button">
+        Open
+        <input id="file" type="file" accept=".wasm,application/wasm">
+      </label>
+      <button class="primary" id="run" type="button" disabled>Run</button>
+      <button id="clear" type="button">Clear</button>
+    </div>
+  </header>
+  <main>
+    <div class="dropzone" id="dropzone">
+      Drop a wasm file that imports env.putchar, then run its main or _start export.
+    </div>
+    <div class="status" id="status" role="status"></div>
+    <textarea id="output" readonly spellcheck="false" aria-label="Output"></textarea>
+  </main>
+
+  <script type="module">
+    const fileInput = document.getElementById("file");
+    const dropzone = document.getElementById("dropzone");
+    const output = document.getElementById("output");
+    const status = document.getElementById("status");
+    const runButton = document.getElementById("run");
+    const clearButton = document.getElementById("clear");
+
+    let wasmBytes = null;
+    let wasmName = "";
+
+    const putchar = (ch) => {
+      output.value += String.fromCharCode(ch & 255);
+      output.scrollTop = output.scrollHeight;
+    };
+
+    const setStatus = (message) => {
+      status.textContent = message;
+    };
+
+    const loadFile = async (file) => {
+      wasmBytes = await file.arrayBuffer();
+      wasmName = file.name || "dropped wasm";
+      runButton.disabled = false;
+      output.value = "";
+      setStatus(`Loaded ${wasmName}`);
+      await run();
+    };
+
+    const instantiate = async () => {
+      if (!wasmBytes) throw new Error("drop or open a wasm file first");
+      const imports = { env: { putchar } };
+      const wasm = await WebAssembly.instantiate(wasmBytes, imports);
+      return wasm.instance;
+    };
+
+    const run = async () => {
+      runButton.disabled = true;
+      setStatus(`Running ${wasmName}`);
+      try {
+        output.value = "";
+        const instance = await instantiate();
+        const entry = instance.exports.main ?? instance.exports._start;
+        if (typeof entry !== "function") {
+          throw new Error("missing main or _start export");
+        }
+        entry();
+        setStatus(`Done ${wasmName}`);
+      } catch (e) {
+        setStatus(e.message);
+      } finally {
+        runButton.disabled = !wasmBytes;
+      }
+    };
+
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files?.[0];
+      if (file) await loadFile(file);
+      fileInput.value = "";
+    });
+
+    runButton.addEventListener("click", run);
+    clearButton.addEventListener("click", () => {
+      output.value = "";
+      setStatus(wasmBytes ? `Loaded ${wasmName}` : "");
+    });
+
+    dropzone.addEventListener("dragenter", (e) => {
+      e.preventDefault();
+      dropzone.classList.add("dragover");
+    });
+
+    dropzone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropzone.classList.add("dragover");
+    });
+
+    dropzone.addEventListener("dragleave", () => {
+      dropzone.classList.remove("dragover");
+    });
+
+    dropzone.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      dropzone.classList.remove("dragover");
+      const file = e.dataTransfer.files?.[0];
+      if (file) await loadFile(file);
+    });
+  </script>
+</body>
+</html>
